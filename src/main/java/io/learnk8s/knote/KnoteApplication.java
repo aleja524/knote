@@ -29,6 +29,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.resource.PathResourceResolver;
 
 import java.io.File;
+import java.io.InputStream;
+import java.net.URLConnection;
+import io.minio.BucketExistsArgs;
+import io.minio.GetObjectArgs;
+import io.minio.MakeBucketArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import org.springframework.context.annotation.Bean;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -97,11 +108,26 @@ class KNoteController {
     @Autowired
     private NotesRepository notesRepository;
     @Autowired
+    private MinioClient minioClient;
+    @Value("${minio.bucket}")
+    private String bucket;
+    @Autowired
     private KnoteProperties properties;
 
     private Parser parser = Parser.builder().build();
     private HtmlRenderer renderer = HtmlRenderer.builder().build();
 
+
+    @GetMapping("/uploads/{fileId}")
+    public ResponseEntity<byte[]> image(@PathVariable String fileId) throws Exception {
+        try (InputStream in = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucket).object(fileId).build())) {
+            String type = URLConnection.guessContentTypeFromName(fileId);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(type != null ? type : "application/octet-stream"))
+                    .body(in.readAllBytes());
+        }
+    }
 
     @GetMapping("/")
     public String index(Model model) {
@@ -140,13 +166,19 @@ class KNoteController {
     }
 
     private void uploadImage(MultipartFile file, String description, Model model) throws Exception {
-        File uploadsDir = new File(properties.getUploadDir());
-        if (!uploadsDir.exists()) {
-            uploadsDir.mkdir();
+        boolean exists = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
+        if (!exists) {
+            minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
         }
         String fileId = UUID.randomUUID().toString() + "." +
                 file.getOriginalFilename().split("\\.")[1];
-        file.transferTo(new File(properties.getUploadDir() + fileId));
+        try (InputStream in = file.getInputStream()) {
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(bucket).object(fileId)
+                    .stream(in, file.getSize(), -1)
+                    .contentType(file.getContentType())
+                    .build());
+        }
         model.addAttribute("description",
                 description + " ![](/uploads/" + fileId + ")");
     }
@@ -162,4 +194,17 @@ class KNoteController {
         }
     }
 
+}
+
+@Configuration
+class MinioConfig {
+    @Bean
+    MinioClient minioClient(@Value("${minio.url}") String url,
+                            @Value("${minio.access-key}") String accessKey,
+                            @Value("${minio.secret-key}") String secretKey) {
+        return MinioClient.builder()
+                .endpoint(url)
+                .credentials(accessKey, secretKey)
+                .build();
+    }
 }
