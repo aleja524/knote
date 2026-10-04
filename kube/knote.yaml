@@ -14,12 +14,20 @@ spec:
     spec:
       containers:
         - name: knote
-          image: aleja524/knote:1.0
+          image: aleja524/knote:2.0
           ports:
             - containerPort: 8080
           env:
             - name: MONGO_URL
               value: mongodb://mongo:27017/dev
+            - name: MINIO_URL
+              value: http://minio:9000
+            - name: MINIO_ACCESS_KEY
+              value: minioadmin
+            - name: MINIO_SECRET_KEY
+              value: minioadmin123
+            - name: MINIO_BUCKET
+              value: knote
 ---
 apiVersion: v1
 kind: Service
